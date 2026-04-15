@@ -12,10 +12,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+<<<<<<< HEAD
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
+=======
+from pathlib import Path
+from typing import Iterable
+>>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
 
 
 BITOMAT_RATES_URL = "https://api.bitomat.com/getRates"
@@ -25,7 +30,10 @@ COINGECKO_USDT_PLN_URL = (
     "https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=pln"
 )
 DEFAULT_THRESHOLD_PERCENT = 2.0
+<<<<<<< HEAD
 WARSAW_SCHEDULE_HOURS = {2, 10, 18}
+=======
+>>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
 
 
 @dataclass
@@ -171,11 +179,14 @@ def telegram_config() -> tuple[str, str]:
     return token, chat_id
 
 
+<<<<<<< HEAD
 def should_run_now() -> bool:
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
     return now.minute == 0 and now.hour in WARSAW_SCHEDULE_HOURS
 
 
+=======
+>>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
 def send_telegram_message(message: str) -> None:
     token, chat_id = telegram_config()
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -224,11 +235,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print the computed values without sending Telegram messages.",
     )
+<<<<<<< HEAD
     parser.add_argument(
         "--force",
         action="store_true",
         help="Run immediately even if the current Poland time is outside the schedule.",
     )
+=======
+>>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
     return parser.parse_args()
 
 
@@ -236,11 +250,14 @@ def main() -> int:
     load_env_file(Path(__file__).with_name(".env"))
     args = parse_args()
 
+<<<<<<< HEAD
     if not args.dry_run and not args.force and os.getenv("GITHUB_ACTIONS") and not should_run_now():
         now = datetime.now(ZoneInfo("Europe/Warsaw")).strftime("%Y-%m-%d %H:%M:%S %Z")
         print(f"Skipping run outside Poland schedule window. Current Warsaw time: {now}")
         return 0
 
+=======
+>>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
     try:
         snapshot = build_snapshot()
     except urllib.error.URLError as exc:
