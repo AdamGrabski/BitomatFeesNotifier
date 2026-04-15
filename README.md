@@ -15,11 +15,7 @@ Commission is calculated as:
 
 ## Setup
 
-<<<<<<< HEAD
 1. For local runs, copy `.env.example` to `.env`
-=======
-1. Copy `.env.example` to `.env`
->>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
 2. Put your Telegram bot token and chat ID into `.env`
 3. Run:
 
@@ -47,19 +43,14 @@ https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
 
 ## Schedule
 
-<<<<<<< HEAD
 This repo also includes a GitHub Actions workflow in `.github/workflows/bitomat-monitor.yml`.
 
 GitHub Actions runs every hour, and the script only proceeds at these Warsaw times:
-=======
-The Codex automation is set to run every day at:
->>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
 
 - 02:00 Poland time
 - 10:00 Poland time
 - 18:00 Poland time
 
-<<<<<<< HEAD
 That matches "every 8 hours starting at 10 AM Poland time", while handling daylight saving time correctly.
 
 ## GitHub Secrets
@@ -71,6 +62,3 @@ If you run this from GitHub Actions, create these repository secrets:
 - `COMMISSION_THRESHOLD_PERCENT`
 
 The workflow reads them automatically, so you do not need to commit a `.env` file.
-=======
-That matches "every 8 hours starting at 10 AM Poland time".
->>>>>>> a65d91c4bd3f23703ee099c173ae72ee87300d4a
