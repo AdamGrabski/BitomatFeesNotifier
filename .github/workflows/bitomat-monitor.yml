@@ -4,6 +4,12 @@ on:
   schedule:
     - cron: "0 * * * *"
   workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run immediately and ignore the Poland-time schedule window"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   monitor:
@@ -23,4 +29,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           COMMISSION_THRESHOLD_PERCENT: ${{ secrets.COMMISSION_THRESHOLD_PERCENT }}
+          FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: python bitomat_usdt_monitor.py

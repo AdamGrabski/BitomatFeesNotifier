@@ -26,6 +26,7 @@ COINGECKO_USDT_PLN_URL = (
 )
 DEFAULT_THRESHOLD_PERCENT = 2.0
 WARSAW_SCHEDULE_HOURS = {2, 10, 18}
+DEFAULT_SCHEDULE_GRACE_MINUTES = 15
 
 
 @dataclass
@@ -171,9 +172,16 @@ def telegram_config() -> tuple[str, str]:
     return token, chat_id
 
 
+def env_flag(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def should_run_now() -> bool:
     now = datetime.now(ZoneInfo("Europe/Warsaw"))
-    return now.minute == 0 and now.hour in WARSAW_SCHEDULE_HOURS
+    grace_minutes = int(
+        os.getenv("SCHEDULE_GRACE_MINUTES", str(DEFAULT_SCHEDULE_GRACE_MINUTES))
+    )
+    return now.hour in WARSAW_SCHEDULE_HOURS and 0 <= now.minute < grace_minutes
 
 def send_telegram_message(message: str) -> None:
     token, chat_id = telegram_config()
@@ -235,7 +243,9 @@ def main() -> int:
     load_env_file(Path(__file__).with_name(".env"))
     args = parse_args()
 
-    if not args.dry_run and not args.force and os.getenv("GITHUB_ACTIONS") and not should_run_now():
+    force_run = args.force or env_flag("FORCE_RUN")
+
+    if not args.dry_run and not force_run and os.getenv("GITHUB_ACTIONS") and not should_run_now():
         now = datetime.now(ZoneInfo("Europe/Warsaw")).strftime("%Y-%m-%d %H:%M:%S %Z")
         print(f"Skipping run outside Poland schedule window. Current Warsaw time: {now}")
         return 0

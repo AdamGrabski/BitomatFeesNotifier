@@ -53,6 +53,8 @@ GitHub Actions runs every hour, and the script only proceeds at these Warsaw tim
 
 That matches "every 8 hours starting at 10 AM Poland time", while handling daylight saving time correctly.
 
+The script allows a short grace window after those times so GitHub queue delays do not accidentally skip a run.
+
 ## GitHub Secrets
 
 If you run this from GitHub Actions, create these repository secrets:
@@ -62,3 +64,14 @@ If you run this from GitHub Actions, create these repository secrets:
 - `COMMISSION_THRESHOLD_PERCENT`
 
 The workflow reads them automatically, so you do not need to commit a `.env` file.
+
+## Manual GitHub Test
+
+To test immediately in GitHub:
+
+1. Open `Actions`
+2. Open `Bitomat Monitor`
+3. Click `Run workflow`
+4. Set `force_run` to `true`
+
+That bypasses the Poland-time schedule check for that one manual test only.
