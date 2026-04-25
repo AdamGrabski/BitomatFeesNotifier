@@ -12,10 +12,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
-from zoneinfo import ZoneInfo
 
 
 BITOMAT_RATES_URL = "https://api.bitomat.com/getRates"
@@ -25,8 +24,10 @@ COINGECKO_USDT_PLN_URL = (
     "https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=pln"
 )
 DEFAULT_THRESHOLD_PERCENT = 2.0
-WARSAW_SCHEDULE_HOURS = {2, 10, 18}
-DEFAULT_SCHEDULE_GRACE_MINUTES = 15
+DEFAULT_ALERT_CHANGE_PERCENT = 0.10
+DEFAULT_STATE_FILE = "alert_state.json"
+GOOD_ZONE = "GOOD"
+BAD_ZONE = "BAD"
 
 
 @dataclass
@@ -35,6 +36,13 @@ class MarketSnapshot:
     reference_pln: float
     commission_percent: float
     reference_source: str
+
+
+@dataclass
+class AlertDecision:
+    should_alert: bool
+    alert_type: str
+    reason: str
 
 
 def load_env_file(path: Path) -> None:
@@ -172,17 +180,6 @@ def telegram_config() -> tuple[str, str]:
     return token, chat_id
 
 
-def env_flag(name: str) -> bool:
-    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def should_run_now() -> bool:
-    now = datetime.now(ZoneInfo("Europe/Warsaw"))
-    grace_minutes = int(
-        os.getenv("SCHEDULE_GRACE_MINUTES", str(DEFAULT_SCHEDULE_GRACE_MINUTES))
-    )
-    return now.hour in WARSAW_SCHEDULE_HOURS and 0 <= now.minute < grace_minutes
-
 def send_telegram_message(message: str) -> None:
     token, chat_id = telegram_config()
     url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -203,14 +200,148 @@ def send_telegram_message(message: str) -> None:
 
 def format_report(snapshot: MarketSnapshot, threshold_percent: float) -> str:
     return (
-        "*Bitomat USDT alert*\n"
+        "*Bitomat USDT status*\n"
         f"Bitomat sell price: `{snapshot.bitomat_sell_pln:.4f} PLN`\n"
         f"Reference price ({snapshot.reference_source}): "
         f"`{snapshot.reference_pln:.4f} PLN`\n"
         f"Commission: `{snapshot.commission_percent:.2f}%`\n"
-        f"Threshold: `{threshold_percent:.2f}%`\n"
-        "Condition met: Bitomat commission is below your target."
+        f"Target threshold: `{threshold_percent:.2f}%`\n"
     )
+
+
+def current_zone(snapshot: MarketSnapshot, threshold_percent: float) -> str:
+    if snapshot.commission_percent < threshold_percent:
+        return GOOD_ZONE
+    return BAD_ZONE
+
+
+def load_state(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
+def state_from_snapshot(
+    snapshot: MarketSnapshot,
+    threshold_percent: float,
+    previous_state: dict[str, object],
+    decision: AlertDecision,
+) -> dict[str, object]:
+    zone = current_zone(snapshot, threshold_percent)
+    state = {
+        "zone": zone,
+        "commission_percent": round(snapshot.commission_percent, 4),
+        "bitomat_sell_pln": round(snapshot.bitomat_sell_pln, 4),
+        "reference_pln": round(snapshot.reference_pln, 4),
+        "reference_source": snapshot.reference_source,
+        "threshold_percent": threshold_percent,
+        "last_checked_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+    if decision.should_alert:
+        state["last_alert_type"] = decision.alert_type
+        state["last_alert_at_utc"] = state["last_checked_at_utc"]
+        state["last_alert_commission_percent"] = round(snapshot.commission_percent, 2)
+    else:
+        for key in (
+            "last_alert_type",
+            "last_alert_at_utc",
+            "last_alert_commission_percent",
+        ):
+            if key in previous_state:
+                state[key] = previous_state[key]
+
+    return state
+
+
+def save_state(path: Path, state: dict[str, object]) -> None:
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def decide_alert(
+    snapshot: MarketSnapshot,
+    threshold_percent: float,
+    change_threshold_percent: float,
+    previous_state: dict[str, object],
+) -> AlertDecision:
+    zone = current_zone(snapshot, threshold_percent)
+    previous_zone = previous_state.get("zone")
+
+    if previous_zone is None:
+        if zone == GOOD_ZONE:
+            return AlertDecision(
+                True,
+                "entered_good_zone",
+                "Bitomat commission is already below your target.",
+            )
+        return AlertDecision(
+            False,
+            "initial_bad_zone",
+            "Initial state saved; commission is outside your target.",
+        )
+
+    if previous_zone == BAD_ZONE and zone == GOOD_ZONE:
+        return AlertDecision(
+            True,
+            "entered_good_zone",
+            "Bitomat commission dropped below your target.",
+        )
+
+    if previous_zone == GOOD_ZONE and zone == BAD_ZONE:
+        return AlertDecision(
+            True,
+            "left_good_zone",
+            "Bitomat commission moved back above your target.",
+        )
+
+    if zone == GOOD_ZONE:
+        previous_alert_commission = previous_state.get("last_alert_commission_percent")
+        if isinstance(previous_alert_commission, (int, float)):
+            change = abs(snapshot.commission_percent - float(previous_alert_commission))
+            if change >= change_threshold_percent:
+                return AlertDecision(
+                    True,
+                    "good_zone_changed",
+                    (
+                        "Bitomat commission is still below target and changed "
+                        f"by at least {change_threshold_percent:.2f} percentage points."
+                    ),
+                )
+        else:
+            return AlertDecision(
+                True,
+                "good_zone_confirmed",
+                "Bitomat commission is below your target.",
+            )
+
+    return AlertDecision(
+        False,
+        "no_meaningful_change",
+        "No meaningful alert-state change.",
+    )
+
+
+def format_alert_message(
+    snapshot: MarketSnapshot,
+    threshold_percent: float,
+    decision: AlertDecision,
+) -> str:
+    status_line = {
+        "entered_good_zone": "Target reached: Bitomat is below your commission target.",
+        "good_zone_changed": "Target still active: commission changed meaningfully.",
+        "good_zone_confirmed": "Target reached: Bitomat is below your commission target.",
+        "left_good_zone": "Target ended: Bitomat moved above your commission target.",
+    }.get(decision.alert_type, decision.reason)
+
+    return f"{format_report(snapshot, threshold_percent)}{status_line}"
 
 
 def parse_args() -> argparse.Namespace:
@@ -232,9 +363,20 @@ def parse_args() -> argparse.Namespace:
         help="Print the computed values without sending Telegram messages.",
     )
     parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Run immediately even if the current Poland time is outside the schedule.",
+        "--state-file",
+        default=os.getenv("ALERT_STATE_FILE", DEFAULT_STATE_FILE),
+        help=f"Path to the alert state file. Default: {DEFAULT_STATE_FILE}",
+    )
+    parser.add_argument(
+        "--change-threshold",
+        type=float,
+        default=float(
+            os.getenv("ALERT_CHANGE_PERCENT", DEFAULT_ALERT_CHANGE_PERCENT)
+        ),
+        help=(
+            "Alert again inside the good zone only when commission changes by at "
+            "least this many percentage points. Default: 0.10"
+        ),
     )
     return parser.parse_args()
 
@@ -242,13 +384,6 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     load_env_file(Path(__file__).with_name(".env"))
     args = parse_args()
-
-    force_run = args.force or env_flag("FORCE_RUN")
-
-    if not args.dry_run and not force_run and os.getenv("GITHUB_ACTIONS") and not should_run_now():
-        now = datetime.now(ZoneInfo("Europe/Warsaw")).strftime("%Y-%m-%d %H:%M:%S %Z")
-        print(f"Skipping run outside Poland schedule window. Current Warsaw time: {now}")
-        return 0
 
     try:
         snapshot = build_snapshot()
@@ -264,28 +399,44 @@ def main() -> int:
         f"{snapshot.bitomat_sell_pln:.4f} PLN | "
         f"Reference ({snapshot.reference_source}): "
         f"{snapshot.reference_pln:.4f} PLN | "
-        f"Commission: {snapshot.commission_percent:.2f}%"
+            f"Commission: {snapshot.commission_percent:.2f}%"
     )
 
-    if snapshot.commission_percent >= args.threshold:
-        print(
-            f"No alert sent because {snapshot.commission_percent:.2f}% "
-            f"is not below {args.threshold:.2f}%."
-        )
-        return 0
+    state_path = Path(args.state_file)
+    previous_state = load_state(state_path)
+    decision = decide_alert(
+        snapshot,
+        args.threshold,
+        args.change_threshold,
+        previous_state,
+    )
+    next_state = state_from_snapshot(
+        snapshot,
+        args.threshold,
+        previous_state,
+        decision,
+    )
+
+    print(f"Alert decision: {decision.alert_type} - {decision.reason}")
 
     if args.dry_run:
-        print("Dry run only, Telegram message not sent.")
-        print(format_report(snapshot, args.threshold))
+        print("Dry run only, Telegram message not sent and state not saved.")
+        if decision.should_alert:
+            print(format_alert_message(snapshot, args.threshold, decision))
         return 0
 
-    try:
-        send_telegram_message(format_report(snapshot, args.threshold))
-    except Exception as exc:
-        print(f"Telegram error: {exc}", file=sys.stderr)
-        return 1
+    if decision.should_alert:
+        try:
+            send_telegram_message(format_alert_message(snapshot, args.threshold, decision))
+        except Exception as exc:
+            print(f"Telegram error: {exc}", file=sys.stderr)
+            return 1
+        print("Telegram alert sent.")
+    else:
+        print("No Telegram alert sent.")
 
-    print("Telegram alert sent.")
+    save_state(state_path, next_state)
+    print(f"State saved to {state_path}.")
     return 0
 
 
