@@ -1,9 +1,9 @@
 {
-  "bitomat_sell_pln": 3.4344,
-  "commission_percent": 5.0116,
-  "last_checked_at_utc": "2026-04-27T07:57:50+00:00",
-  "reference_pln": 3.6156,
-  "reference_source": "Google Finance",
+  "bitomat_sell_pln": 3.435,
+  "commission_percent": 5.1105,
+  "last_checked_at_utc": "2026-04-27T13:08:55+00:00",
+  "reference_pln": 3.62,
+  "reference_source": "CoinGecko fallback",
   "threshold_percent": 2.0,
   "zone": "BAD"
 }
