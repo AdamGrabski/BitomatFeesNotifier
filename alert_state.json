@@ -1,9 +1,12 @@
 {
-  "bitomat_sell_pln": 3.5046,
-  "commission_percent": 3.4971,
-  "last_checked_at_utc": "2026-04-28T07:56:46+00:00",
-  "reference_pln": 3.6316,
+  "bitomat_sell_pln": 3.5023,
+  "commission_percent": -250.23,
+  "last_alert_at_utc": "2026-04-28T16:13:11+00:00",
+  "last_alert_commission_percent": -250.23,
+  "last_alert_type": "entered_good_zone",
+  "last_checked_at_utc": "2026-04-28T16:13:11+00:00",
+  "reference_pln": 1.0,
   "reference_source": "Google Finance",
   "threshold_percent": 2.0,
-  "zone": "BAD"
+  "zone": "GOOD"
 }
