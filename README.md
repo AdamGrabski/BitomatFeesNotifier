@@ -7,7 +7,8 @@ This script checks Bitomat's live `USDT -> PLN` sell rate, compares it with a ma
 - Bitomat sell price: pulled from `https://api.bitomat.com/getRates`
 - Reference price:
   - first tries Google Finance
-  - falls back to CoinGecko if Google Finance changes its page markup
+  - rejects unrealistic Google Finance values
+  - falls back to CoinGecko if Google Finance changes its page markup or returns an invalid quote
 
 Commission is calculated as:
 
@@ -21,6 +22,12 @@ Commission is calculated as:
 
 ```powershell
 py .\bitomat_usdt_monitor.py --dry-run
+```
+
+Run the unit tests:
+
+```powershell
+py -m unittest -v
 ```
 
 Then run it for real:

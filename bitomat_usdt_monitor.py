@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -28,6 +29,12 @@ DEFAULT_ALERT_CHANGE_PERCENT = 0.10
 DEFAULT_STATE_FILE = "alert_state.json"
 GOOD_ZONE = "GOOD"
 BAD_ZONE = "BAD"
+USDT_USD_MIN = 0.80
+USDT_USD_MAX = 1.20
+USD_PLN_MIN = 2.00
+USD_PLN_MAX = 8.00
+USDT_PLN_MIN = 2.00
+USDT_PLN_MAX = 8.00
 
 
 @dataclass
@@ -108,7 +115,17 @@ def fetch_bitomat_sell_rate_pln() -> float:
     raise RuntimeError("Could not find USDT/PLN sell rate in Bitomat response.")
 
 
-def _extract_google_finance_price(html: str) -> float | None:
+def _is_price_in_range(value: float, minimum: float, maximum: float) -> bool:
+    return math.isfinite(value) and minimum <= value <= maximum
+
+
+def _extract_google_finance_price(
+    html: str,
+    *,
+    minimum: float,
+    maximum: float,
+    allow_usd_near_one_fallback: bool = False,
+) -> float | None:
     patterns = [
         r'"price"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"',
         r'"priceAmount"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"',
@@ -117,30 +134,51 @@ def _extract_google_finance_price(html: str) -> float | None:
         r'aria-label="Price[^"]*\$([0-9]+(?:\.[0-9]+)?)"',
     ]
     for pattern in patterns:
-        match = re.search(pattern, html)
-        if match:
-            return float(match.group(1))
+        for match in re.finditer(pattern, html):
+            value = float(match.group(1))
+            if _is_price_in_range(value, minimum, maximum):
+                return value
 
     # Google sometimes leaves the visible price as a bare "$1" in the source.
-    candidates = [
-        float(value)
-        for value in re.findall(r"\$([0-9]+(?:\.[0-9]+)?)", html)
-        if 0.8 <= float(value) <= 1.2
-    ]
-    return find_first(candidates)
+    # Only use this for USDT/USD. On USD/PLN pages it can accidentally pick up
+    # unrelated "$1" text and produce a fake 1 PLN reference.
+    if allow_usd_near_one_fallback:
+        candidates = [
+            float(value)
+            for value in re.findall(r"\$([0-9]+(?:\.[0-9]+)?)", html)
+            if _is_price_in_range(float(value), minimum, maximum)
+        ]
+        return find_first(candidates)
+
+    return None
 
 
 def fetch_google_reference_pln() -> tuple[float, str]:
     usdt_usd_html = fetch_text(GOOGLE_FINANCE_USDT_USD_URL)
     usd_pln_html = fetch_text(GOOGLE_FINANCE_USD_PLN_URL)
 
-    usdt_usd = _extract_google_finance_price(usdt_usd_html)
-    usd_pln = _extract_google_finance_price(usd_pln_html)
+    usdt_usd = _extract_google_finance_price(
+        usdt_usd_html,
+        minimum=USDT_USD_MIN,
+        maximum=USDT_USD_MAX,
+        allow_usd_near_one_fallback=True,
+    )
+    usd_pln = _extract_google_finance_price(
+        usd_pln_html,
+        minimum=USD_PLN_MIN,
+        maximum=USD_PLN_MAX,
+    )
 
     if usdt_usd is None or usd_pln is None:
-        raise RuntimeError("Could not parse Google Finance quote.")
+        raise RuntimeError("Could not parse a realistic Google Finance quote.")
 
-    return usdt_usd * usd_pln, "Google Finance"
+    reference_pln = usdt_usd * usd_pln
+    if not _is_price_in_range(reference_pln, USDT_PLN_MIN, USDT_PLN_MAX):
+        raise RuntimeError(
+            f"Google Finance quote is outside the expected range: {reference_pln:.4f} PLN."
+        )
+
+    return reference_pln, "Google Finance"
 
 
 def fetch_coingecko_reference_pln() -> tuple[float, str]:
