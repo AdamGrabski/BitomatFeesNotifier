@@ -1,10 +1,10 @@
 {
-  "bitomat_sell_pln": 3.3796,
-  "commission_percent": 6.6409,
+  "bitomat_sell_pln": 3.3527,
+  "commission_percent": 7.384,
   "last_alert_at_utc": "2026-04-29T07:51:05+00:00",
   "last_alert_commission_percent": 4.93,
   "last_alert_type": "left_good_zone",
-  "last_checked_at_utc": "2026-05-30T16:50:27+00:00",
+  "last_checked_at_utc": "2026-05-31T02:12:36+00:00",
   "reference_pln": 3.62,
   "reference_source": "CoinGecko fallback",
   "threshold_percent": 2.5,
