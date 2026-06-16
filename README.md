@@ -1,14 +1,16 @@
-# Bitomat USDT Monitor
+# Bitomat Fee Monitor
 
-This script checks Bitomat's live `USDT -> PLN` sell rate, compares it with a market reference, and sends a Telegram alert when Bitomat's commission is below your target threshold.
+This script checks Bitomat's live `USDT -> PLN` and `BTC -> PLN` sell rates, compares them with market references, and sends a Telegram alert when either token's commission is below your target threshold.
 
 ## What it compares
 
-- Bitomat sell price: pulled from `https://api.bitomat.com/getRates`
-- Reference price:
+- Bitomat sell prices: pulled from `https://api.bitomat.com/getRates`
+- USDT reference price:
   - first tries Google Finance
   - rejects unrealistic Google Finance values
   - falls back to CoinGecko if Google Finance changes its page markup or returns an invalid quote
+- BTC reference price:
+  - uses CoinGecko
 
 Commission is calculated as:
 
@@ -60,7 +62,7 @@ Instead, the script checks Bitomat whenever GitHub starts it and uses `alert_sta
 
 The target is controlled by `COMMISSION_THRESHOLD_PERCENT`.
 
-Telegram is notified when:
+Telegram is notified separately for USDT and BTC when:
 
 - commission enters the target zone
 - commission leaves the target zone

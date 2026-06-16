@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor Bitomat's USDT sell commission and alert on Telegram."""
+"""Monitor Bitomat sell commissions and alert on Telegram."""
 
 from __future__ import annotations
 
@@ -21,24 +21,42 @@ from typing import Iterable
 BITOMAT_RATES_URL = "https://api.bitomat.com/getRates"
 GOOGLE_FINANCE_USDT_USD_URL = "https://www.google.com/finance/quote/USDT-USD"
 GOOGLE_FINANCE_USD_PLN_URL = "https://www.google.com/finance/quote/USD-PLN"
-COINGECKO_USDT_PLN_URL = (
-    "https://api.coingecko.com/api/v3/simple/price?ids=tether&vs_currencies=pln"
+COINGECKO_PLN_URL_TEMPLATE = (
+    "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=pln"
 )
 DEFAULT_THRESHOLD_PERCENT = 2.0
 DEFAULT_ALERT_CHANGE_PERCENT = 0.10
 DEFAULT_STATE_FILE = "alert_state.json"
 GOOD_ZONE = "GOOD"
 BAD_ZONE = "BAD"
+TOKENS = ("USDT", "BTC")
 USDT_USD_MIN = 0.80
 USDT_USD_MAX = 1.20
 USD_PLN_MIN = 2.00
 USD_PLN_MAX = 8.00
 USDT_PLN_MIN = 2.00
 USDT_PLN_MAX = 8.00
+BTC_PLN_MIN = 50_000.00
+BTC_PLN_MAX = 2_000_000.00
+
+
+@dataclass
+class TokenConfig:
+    symbol: str
+    coingecko_id: str
+    min_reference_pln: float
+    max_reference_pln: float
+
+
+TOKEN_CONFIGS = {
+    "USDT": TokenConfig("USDT", "tether", USDT_PLN_MIN, USDT_PLN_MAX),
+    "BTC": TokenConfig("BTC", "bitcoin", BTC_PLN_MIN, BTC_PLN_MAX),
+}
 
 
 @dataclass
 class MarketSnapshot:
+    token: str
     bitomat_sell_pln: float
     reference_pln: float
     commission_percent: float
@@ -94,25 +112,33 @@ def find_first(iterable: Iterable[float]) -> float | None:
     return None
 
 
-def fetch_bitomat_sell_rate_pln() -> float:
+def fetch_bitomat_sell_rates_pln(tokens: Iterable[str] = TOKENS) -> dict[str, float]:
     data = fetch_json(BITOMAT_RATES_URL, accept="application/json")
     if not isinstance(data, list):
         raise RuntimeError("Unexpected Bitomat rates payload.")
 
+    wanted_tokens = set(tokens)
+    rates: dict[str, float] = {}
     for entry in data:
         if not isinstance(entry, dict):
             continue
         from_currency = entry.get("fromCurrency") or {}
-        if (
-            isinstance(from_currency, dict)
-            and from_currency.get("name") == "USDT"
-            and entry.get("toCurrency") == "PLN"
-        ):
+        token = from_currency.get("name") if isinstance(from_currency, dict) else None
+        if token in wanted_tokens and entry.get("toCurrency") == "PLN":
             rate_bid = entry.get("rateBid")
             if isinstance(rate_bid, (int, float)):
-                return float(rate_bid)
+                rates[str(token)] = float(rate_bid)
 
-    raise RuntimeError("Could not find USDT/PLN sell rate in Bitomat response.")
+    missing_tokens = wanted_tokens - rates.keys()
+    if missing_tokens:
+        missing = ", ".join(sorted(missing_tokens))
+        raise RuntimeError(f"Could not find {missing}/PLN sell rate in Bitomat response.")
+
+    return rates
+
+
+def fetch_bitomat_sell_rate_pln(token: str = "USDT") -> float:
+    return fetch_bitomat_sell_rates_pln((token,))[token]
 
 
 def _is_price_in_range(value: float, minimum: float, maximum: float) -> bool:
@@ -153,7 +179,7 @@ def _extract_google_finance_price(
     return None
 
 
-def fetch_google_reference_pln() -> tuple[float, str]:
+def fetch_google_usdt_reference_pln() -> tuple[float, str]:
     usdt_usd_html = fetch_text(GOOGLE_FINANCE_USDT_USD_URL)
     usd_pln_html = fetch_text(GOOGLE_FINANCE_USD_PLN_URL)
 
@@ -181,31 +207,73 @@ def fetch_google_reference_pln() -> tuple[float, str]:
     return reference_pln, "Google Finance"
 
 
-def fetch_coingecko_reference_pln() -> tuple[float, str]:
-    data = fetch_json(COINGECKO_USDT_PLN_URL, accept="application/json")
+def fetch_coingecko_reference_pln(
+    config: TokenConfig,
+    *,
+    source_name: str = "CoinGecko",
+) -> tuple[float, str]:
+    url = COINGECKO_PLN_URL_TEMPLATE.format(
+        coin_id=urllib.parse.quote(config.coingecko_id)
+    )
+    data = fetch_json(url, accept="application/json")
     try:
-        return float(data["tether"]["pln"]), "CoinGecko fallback"
+        reference_pln = float(data[config.coingecko_id]["pln"])
     except (KeyError, TypeError, ValueError) as exc:
-        raise RuntimeError("Could not parse CoinGecko quote.") from exc
+        raise RuntimeError(f"Could not parse CoinGecko {config.symbol} quote.") from exc
+
+    if not _is_price_in_range(
+        reference_pln,
+        config.min_reference_pln,
+        config.max_reference_pln,
+    ):
+        raise RuntimeError(
+            f"CoinGecko {config.symbol} quote is outside the expected range: "
+            f"{reference_pln:.4f} PLN."
+        )
+
+    return reference_pln, source_name
 
 
-def fetch_reference_pln() -> tuple[float, str]:
+def fetch_usdt_reference_pln() -> tuple[float, str]:
     try:
-        return fetch_google_reference_pln()
+        return fetch_google_usdt_reference_pln()
     except Exception:
-        return fetch_coingecko_reference_pln()
+        return fetch_coingecko_reference_pln(
+            TOKEN_CONFIGS["USDT"],
+            source_name="CoinGecko fallback",
+        )
 
 
-def build_snapshot() -> MarketSnapshot:
-    bitomat_sell_pln = fetch_bitomat_sell_rate_pln()
-    reference_pln, reference_source = fetch_reference_pln()
+def fetch_reference_pln(token: str) -> tuple[float, str]:
+    if token == "USDT":
+        return fetch_usdt_reference_pln()
+    return fetch_coingecko_reference_pln(TOKEN_CONFIGS[token])
+
+
+def build_snapshot(token: str, bitomat_sell_pln: float) -> MarketSnapshot:
+    reference_pln, reference_source = fetch_reference_pln(token)
     commission_percent = ((reference_pln - bitomat_sell_pln) / reference_pln) * 100
     return MarketSnapshot(
+        token=token,
         bitomat_sell_pln=bitomat_sell_pln,
         reference_pln=reference_pln,
         commission_percent=commission_percent,
         reference_source=reference_source,
     )
+
+
+def build_snapshots() -> tuple[list[MarketSnapshot], list[str]]:
+    bitomat_rates = fetch_bitomat_sell_rates_pln()
+    snapshots: list[MarketSnapshot] = []
+    errors: list[str] = []
+
+    for token in TOKENS:
+        try:
+            snapshots.append(build_snapshot(token, bitomat_rates[token]))
+        except Exception as exc:
+            errors.append(f"{token}: {exc}")
+
+    return snapshots, errors
 
 
 def telegram_config() -> tuple[str, str]:
@@ -238,8 +306,8 @@ def send_telegram_message(message: str) -> None:
 
 def format_report(snapshot: MarketSnapshot, threshold_percent: float) -> str:
     return (
-        "*Bitomat USDT status*\n"
-        f"Bitomat sell price: `{snapshot.bitomat_sell_pln:.4f} PLN`\n"
+        f"*Bitomat {snapshot.token} status*\n"
+        f"Bitomat {snapshot.token} sell price: `{snapshot.bitomat_sell_pln:.4f} PLN`\n"
         f"Reference price ({snapshot.reference_source}): "
         f"`{snapshot.reference_pln:.4f} PLN`\n"
         f"Commission: `{snapshot.commission_percent:.2f}%`\n"
@@ -267,6 +335,21 @@ def load_state(path: Path) -> dict[str, object]:
     return {}
 
 
+def previous_state_for_token(state: dict[str, object], token: str) -> dict[str, object]:
+    token_states = state.get("tokens")
+    if isinstance(token_states, dict):
+        token_state = token_states.get(token)
+        if isinstance(token_state, dict):
+            return token_state
+        return {}
+
+    # Older versions stored one top-level state for USDT only.
+    if token == "USDT" and isinstance(state.get("zone"), str):
+        return state
+
+    return {}
+
+
 def state_from_snapshot(
     snapshot: MarketSnapshot,
     threshold_percent: float,
@@ -275,6 +358,7 @@ def state_from_snapshot(
 ) -> dict[str, object]:
     zone = current_zone(snapshot, threshold_percent)
     state = {
+        "token": snapshot.token,
         "zone": zone,
         "commission_percent": round(snapshot.commission_percent, 4),
         "bitomat_sell_pln": round(snapshot.bitomat_sell_pln, 4),
@@ -298,6 +382,30 @@ def state_from_snapshot(
                 state[key] = previous_state[key]
 
     return state
+
+
+def state_from_snapshots(
+    snapshots: list[MarketSnapshot],
+    threshold_percent: float,
+    previous_state: dict[str, object],
+    decisions: dict[str, AlertDecision],
+) -> dict[str, object]:
+    previous_tokens = previous_state.get("tokens")
+    token_states = dict(previous_tokens) if isinstance(previous_tokens, dict) else {}
+
+    for snapshot in snapshots:
+        token_previous_state = previous_state_for_token(previous_state, snapshot.token)
+        token_states[snapshot.token] = state_from_snapshot(
+            snapshot,
+            threshold_percent,
+            token_previous_state,
+            decisions[snapshot.token],
+        )
+
+    return {
+        "tokens": token_states,
+        "last_checked_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
 
 
 def save_state(path: Path, state: dict[str, object]) -> None:
@@ -373,10 +481,18 @@ def format_alert_message(
     decision: AlertDecision,
 ) -> str:
     status_line = {
-        "entered_good_zone": "Target reached: Bitomat is below your commission target.",
-        "good_zone_changed": "Target still active: commission changed meaningfully.",
-        "good_zone_confirmed": "Target reached: Bitomat is below your commission target.",
-        "left_good_zone": "Target ended: Bitomat moved above your commission target.",
+        "entered_good_zone": (
+            f"Target reached for {snapshot.token}: Bitomat is below your commission target."
+        ),
+        "good_zone_changed": (
+            f"Target still active for {snapshot.token}: commission changed meaningfully."
+        ),
+        "good_zone_confirmed": (
+            f"Target reached for {snapshot.token}: Bitomat is below your commission target."
+        ),
+        "left_good_zone": (
+            f"Target ended for {snapshot.token}: Bitomat moved above your commission target."
+        ),
     }.get(decision.alert_type, decision.reason)
 
     return f"{format_report(snapshot, threshold_percent)}{status_line}"
@@ -385,7 +501,7 @@ def format_alert_message(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Check Bitomat's USDT sell rate against a market reference and send "
+            "Check Bitomat's USDT and BTC sell rates against market references and send "
             "a Telegram alert when the commission drops below the configured threshold."
         )
     )
@@ -424,7 +540,7 @@ def main() -> int:
     args = parse_args()
 
     try:
-        snapshot = build_snapshot()
+        snapshots, snapshot_errors = build_snapshots()
     except urllib.error.URLError as exc:
         print(f"Network error: {exc}", file=sys.stderr)
         return 1
@@ -432,45 +548,70 @@ def main() -> int:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
-    print(
-        "Bitomat USDT sell price: "
-        f"{snapshot.bitomat_sell_pln:.4f} PLN | "
-        f"Reference ({snapshot.reference_source}): "
-        f"{snapshot.reference_pln:.4f} PLN | "
+    for snapshot_error in snapshot_errors:
+        print(f"Token check skipped: {snapshot_error}", file=sys.stderr)
+
+    if not snapshots:
+        print("Error: Could not build any token snapshots.", file=sys.stderr)
+        return 1
+
+    for snapshot in snapshots:
+        print(
+            f"Bitomat {snapshot.token} sell price: "
+            f"{snapshot.bitomat_sell_pln:.4f} PLN | "
+            f"Reference ({snapshot.reference_source}): "
+            f"{snapshot.reference_pln:.4f} PLN | "
             f"Commission: {snapshot.commission_percent:.2f}%"
-    )
+        )
 
     state_path = Path(args.state_file)
     previous_state = load_state(state_path)
-    decision = decide_alert(
-        snapshot,
+    decisions = {
+        snapshot.token: decide_alert(
+            snapshot,
+            args.threshold,
+            args.change_threshold,
+            previous_state_for_token(previous_state, snapshot.token),
+        )
+        for snapshot in snapshots
+    }
+    next_state = state_from_snapshots(
+        snapshots,
         args.threshold,
-        args.change_threshold,
         previous_state,
-    )
-    next_state = state_from_snapshot(
-        snapshot,
-        args.threshold,
-        previous_state,
-        decision,
+        decisions,
     )
 
-    print(f"Alert decision: {decision.alert_type} - {decision.reason}")
+    for snapshot in snapshots:
+        decision = decisions[snapshot.token]
+        print(
+            f"{snapshot.token} alert decision: "
+            f"{decision.alert_type} - {decision.reason}"
+        )
 
     if args.dry_run:
         print("Dry run only, Telegram message not sent and state not saved.")
-        if decision.should_alert:
-            print(format_alert_message(snapshot, args.threshold, decision))
+        for snapshot in snapshots:
+            decision = decisions[snapshot.token]
+            if decision.should_alert:
+                print(format_alert_message(snapshot, args.threshold, decision))
         return 0
 
-    if decision.should_alert:
+    alerts_sent = 0
+    for snapshot in snapshots:
+        decision = decisions[snapshot.token]
+        if not decision.should_alert:
+            continue
+
         try:
             send_telegram_message(format_alert_message(snapshot, args.threshold, decision))
         except Exception as exc:
             print(f"Telegram error: {exc}", file=sys.stderr)
             return 1
-        print("Telegram alert sent.")
-    else:
+        alerts_sent += 1
+        print(f"{snapshot.token} Telegram alert sent.")
+
+    if alerts_sent == 0:
         print("No Telegram alert sent.")
 
     save_state(state_path, next_state)
