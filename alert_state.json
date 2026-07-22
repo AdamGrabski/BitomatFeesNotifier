@@ -1,31 +1,31 @@
 {
-  "last_checked_at_utc": "2026-07-22T10:12:37+00:00",
+  "last_checked_at_utc": "2026-07-22T17:06:00+00:00",
   "tokens": {
     "BTC": {
-      "bitomat_sell_pln": 246430.0,
-      "commission_percent": 1.5009,
-      "last_alert_at_utc": "2026-07-22T01:24:54+00:00",
-      "last_alert_commission_percent": 1.5,
-      "last_alert_type": "entered_good_zone",
-      "last_checked_at_utc": "2026-07-22T10:12:37+00:00",
-      "reference_pln": 250185.0,
+      "bitomat_sell_pln": 249910.0,
+      "commission_percent": 0.4949,
+      "last_alert_at_utc": "2026-07-22T17:06:00+00:00",
+      "last_alert_commission_percent": 0.49,
+      "last_alert_type": "good_zone_changed",
+      "last_checked_at_utc": "2026-07-22T17:06:00+00:00",
+      "reference_pln": 251153.0,
       "reference_source": "CoinGecko",
       "threshold_percent": 2.5,
       "token": "BTC",
       "zone": "GOOD"
     },
     "USDT": {
-      "bitomat_sell_pln": 3.6864,
-      "commission_percent": 2.9895,
-      "last_alert_at_utc": "2026-07-17T16:57:17+00:00",
-      "last_alert_commission_percent": 5.3,
-      "last_alert_type": "left_good_zone",
-      "last_checked_at_utc": "2026-07-22T10:12:37+00:00",
-      "reference_pln": 3.8,
+      "bitomat_sell_pln": 3.7199,
+      "commission_percent": 1.8496,
+      "last_alert_at_utc": "2026-07-22T17:06:00+00:00",
+      "last_alert_commission_percent": 1.85,
+      "last_alert_type": "entered_good_zone",
+      "last_checked_at_utc": "2026-07-22T17:06:00+00:00",
+      "reference_pln": 3.79,
       "reference_source": "CoinGecko fallback",
       "threshold_percent": 2.5,
       "token": "USDT",
-      "zone": "BAD"
+      "zone": "GOOD"
     }
   }
 }
